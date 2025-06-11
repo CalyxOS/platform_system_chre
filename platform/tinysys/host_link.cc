@@ -936,12 +936,8 @@ DRAM_REGION_FUNCTION void HostMessageHandlers::handleNanConfigurationUpdate(
 }
 
 DRAM_REGION_FUNCTION void HostMessageHandlers::handleBtSocketOpen(
-    uint16_t /* hostClientId */, uint64_t /* socketId */,
-    const char * /* name */, uint64_t /* endpointId */, uint64_t /* hubId */,
-    uint32_t /* aclConnectionHandle */, uint32_t /* localCid */,
-    uint32_t /* remoteCid */, uint32_t /* psm */, uint32_t /* localMtu */,
-    uint32_t /* remoteMtu */, uint32_t /* localMps */, uint32_t /* remoteMps */,
-    uint32_t /* initialRxCredits */, uint32_t /* initialTxCredits */) {
+    uint64_t /* hubId */, const BleL2capCocSocketData & /* socketData */,
+    const char * /* name */, uint32_t /* psm */) {
   LOGE("BT Socket offload not supported");
 }
 
@@ -961,6 +957,10 @@ DRAM_REGION_FUNCTION void sendAudioRelease() {
   constexpr size_t kInitialSize = 32;
   buildAndEnqueueMessage(PendingMessageType::LowPowerMicAccessRelease,
                          kInitialSize, msgBuilder, /* cookie= */ nullptr);
+}
+
+void HostMessageHandlers::handleBtSocketCapabilitiesRequest() {
+  LOGE("BT Socket offload not supported");
 }
 
 }  // namespace chre

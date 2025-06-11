@@ -17,8 +17,8 @@
 #ifndef CHRE_UTIL_SYSTEM_MESSAGE_COMMON_H_
 #define CHRE_UTIL_SYSTEM_MESSAGE_COMMON_H_
 
-#include <pw_allocator/unique_ptr.h>
-#include <pw_function/function.h>
+#include "pw_allocator/unique_ptr.h"
+
 #include <cstddef>
 #include <cstdint>
 #include <cstring>
@@ -37,8 +37,14 @@ using SessionId = uint16_t;
 //! An invalid MessageHub ID
 constexpr MessageHubId MESSAGE_HUB_ID_INVALID = 0;
 
+//! A MessageHub ID that matches any MessageHub
+constexpr MessageHubId MESSAGE_HUB_ID_ANY = MESSAGE_HUB_ID_INVALID;
+
 //! An invalid endpoint ID
 constexpr EndpointId ENDPOINT_ID_INVALID = 0;
+
+//! An endpoint ID that matches any endpoint
+constexpr EndpointId ENDPOINT_ID_ANY = ENDPOINT_ID_INVALID;
 
 //! An invalid session ID
 constexpr SessionId SESSION_ID_INVALID = UINT16_MAX;
@@ -53,9 +59,7 @@ enum class EndpointType : uint8_t {
 };
 
 //! Endpoint permissions
-//! This should match CHRE permissions.
-// TODO(b/373417024): Update permissions to this typed name in all MessageRouter
-// code
+//! This should match the CHRE_MESSAGE_PERMISSION_* constants.
 enum class EndpointPermission : uint32_t {
   NONE = 0,
   AUDIO = 1,
@@ -65,10 +69,38 @@ enum class EndpointPermission : uint32_t {
   BLE = 1 << 4,
 };
 
+//! The reason for closing a session
+enum class Reason : uint8_t {
+  UNSPECIFIED = 0,
+  OUT_OF_MEMORY,
+  TIMEOUT,
+  OPEN_ENDPOINT_SESSION_REQUEST_REJECTED,
+  CLOSE_ENDPOINT_SESSION_REQUESTED,
+  ENDPOINT_INVALID,
+  ENDPOINT_GONE,
+  ENDPOINT_CRASHED,
+  HUB_RESET,
+  PERMISSION_DENIED,
+};
+
+//! The format of an RPC message sent using a service
+enum class RpcFormat : uint8_t {
+  CUSTOM = 0,
+  AIDL,
+  PW_RPC_PROTOBUF,
+};
+
 //! Represents a single endpoint connected to a MessageHub
 struct Endpoint {
   MessageHubId messageHubId;
   EndpointId endpointId;
+
+  Endpoint()
+      : messageHubId(MESSAGE_HUB_ID_INVALID), endpointId(ENDPOINT_ID_INVALID) {}
+
+  Endpoint(MessageHubId messageHubId, EndpointId endpointId)
+      : messageHubId(messageHubId),
+        endpointId(endpointId) {}
 
   bool operator==(const Endpoint &other) const {
     return messageHubId == other.messageHubId && endpointId == other.endpointId;
@@ -81,22 +113,61 @@ struct Endpoint {
 
 //! Represents a session between two endpoints
 struct Session {
+  static constexpr size_t kMaxServiceDescriptorLength = 127;
+
+  Session()
+      : sessionId(SESSION_ID_INVALID),
+        isActive(false),
+        hasServiceDescriptor(false) {
+    serviceDescriptor[0] = '\0';
+  }
+
+  Session(SessionId sessionId, Endpoint initiator, Endpoint peer,
+          const char *serviceDescriptor)
+      : sessionId(sessionId),
+        isActive(false),
+        hasServiceDescriptor(serviceDescriptor != nullptr),
+        initiator(initiator),
+        peer(peer) {
+    if (serviceDescriptor != nullptr) {
+      std::strncpy(this->serviceDescriptor, serviceDescriptor,
+                   kMaxServiceDescriptorLength);
+    } else {
+      this->serviceDescriptor[0] = '\0';
+    }
+    this->serviceDescriptor[kMaxServiceDescriptorLength] = '\0';
+  }
+
   SessionId sessionId;
+  bool isActive;
+  bool hasServiceDescriptor;
   Endpoint initiator;
   Endpoint peer;
+  char serviceDescriptor[kMaxServiceDescriptorLength + 1];
 
   bool operator==(const Session &other) const {
     return sessionId == other.sessionId && initiator == other.initiator &&
-           peer == other.peer;
+           peer == other.peer && isActive == other.isActive &&
+           hasServiceDescriptor == other.hasServiceDescriptor &&
+           (!hasServiceDescriptor ||
+            std::strncmp(serviceDescriptor, other.serviceDescriptor,
+                         kMaxServiceDescriptorLength) == 0);
   }
 
   bool operator!=(const Session &other) const {
     return !(*this == other);
   }
 
+  //! @return true if the two sessions are equivalent, i.e. they have the same
+  //! endpoints and service descriptor (if present), false otherwise
   bool isEquivalent(const Session &other) const {
-    return (initiator == other.initiator && peer == other.peer) ||
-           (initiator == other.peer && peer == other.initiator);
+    bool sameEndpoints = (initiator == other.initiator && peer == other.peer) ||
+                         (initiator == other.peer && peer == other.initiator);
+    return hasServiceDescriptor == other.hasServiceDescriptor &&
+           sameEndpoints &&
+           (!hasServiceDescriptor ||
+            std::strncmp(serviceDescriptor, other.serviceDescriptor,
+                         kMaxServiceDescriptorLength) == 0);
   }
 };
 
@@ -106,44 +177,41 @@ struct Message {
   Endpoint recipient;
   SessionId sessionId;
   pw::UniquePtr<std::byte[]> data;
-  size_t length;
   uint32_t messageType;
   uint32_t messagePermissions;
 
   Message()
       : sessionId(SESSION_ID_INVALID),
         data(nullptr),
-        length(0),
         messageType(0),
         messagePermissions(0) {}
-  Message(pw::UniquePtr<std::byte[]> &&data, size_t length,
+
+  Message(pw::UniquePtr<std::byte[]> &&data,
           uint32_t messageType, uint32_t messagePermissions, Session session,
           bool sentBySessionInitiator)
       : sender(sentBySessionInitiator ? session.initiator : session.peer),
         recipient(sentBySessionInitiator ? session.peer : session.initiator),
         sessionId(session.sessionId),
         data(std::move(data)),
-        length(length),
         messageType(messageType),
         messagePermissions(messagePermissions) {}
+
+  Message(const Message &) = delete;
+  Message &operator=(const Message &) = delete;
+
   Message(Message &&other)
       : sender(other.sender),
         recipient(other.recipient),
         sessionId(other.sessionId),
         data(std::move(other.data)),
-        length(other.length),
         messageType(other.messageType),
         messagePermissions(other.messagePermissions) {}
-
-  Message(const Message &) = delete;
-  Message &operator=(const Message &) = delete;
 
   Message &operator=(Message &&other) {
     sender = other.sender;
     recipient = other.recipient;
     sessionId = other.sessionId;
     data = std::move(other.data);
-    length = other.length;
     messageType = other.messageType;
     messagePermissions = other.messagePermissions;
     return *this;
@@ -151,7 +219,6 @@ struct Message {
 };
 
 //! Represents information about an endpoint
-//! Service information is stored in ServiceManager
 struct EndpointInfo {
   static constexpr size_t kMaxNameLength = 50;
 
@@ -178,12 +245,54 @@ struct EndpointInfo {
   bool operator==(const EndpointInfo &other) const {
     return id == other.id && version == other.version && type == other.type &&
            requiredPermissions == other.requiredPermissions &&
-           std::strcmp(name, other.name) == 0;
+           std::strncmp(name, other.name, kMaxNameLength) == 0;
   }
 
   bool operator!=(const EndpointInfo &other) const {
     return !(*this == other);
   }
+};
+
+//! Represents information about a service provided by an endpoint.
+struct ServiceInfo {
+  ServiceInfo(const char *serviceDescriptor, uint32_t majorVersion,
+              uint32_t minorVersion, RpcFormat format)
+      : serviceDescriptor(serviceDescriptor),
+        majorVersion(majorVersion),
+        minorVersion(minorVersion),
+        format(format) {}
+
+  bool operator==(const ServiceInfo &other) const {
+    if (majorVersion != other.majorVersion ||
+        minorVersion != other.minorVersion || format != other.format) {
+      return false;
+    }
+
+    if ((serviceDescriptor == nullptr) !=
+        (other.serviceDescriptor == nullptr)) {
+      return false;
+    }
+    if (serviceDescriptor != nullptr &&
+        std::strcmp(serviceDescriptor, other.serviceDescriptor) != 0) {
+      return false;
+    }
+    return true;
+  }
+
+  bool operator!=(const ServiceInfo &other) const {
+    return !(*this == other);
+  }
+
+  //! The service descriptor, a null-terminated ASCII string. This must be valid
+  //! only for the lifetime of the service iteration methods in MessageRouter.
+  const char *serviceDescriptor;
+
+  //! Version of the service.
+  uint32_t majorVersion;
+  uint32_t minorVersion;
+
+  //! The format of the RPC messages sent using this service.
+  RpcFormat format;
 };
 
 //! Represents information about a MessageHub
@@ -192,7 +301,17 @@ struct MessageHubInfo {
   const char *name;
 
   bool operator==(const MessageHubInfo &other) const {
-    return id == other.id && std::strcmp(name, other.name) == 0;
+    if (id != other.id) {
+      return false;
+    }
+
+    if ((name == nullptr) != (other.name == nullptr)) {
+      return false;
+    }
+    if (name != nullptr && std::strcmp(name, other.name) != 0) {
+      return false;
+    }
+    return true;
   }
 
   bool operator!=(const MessageHubInfo &other) const {

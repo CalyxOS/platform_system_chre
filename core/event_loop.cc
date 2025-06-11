@@ -17,6 +17,7 @@
 #include "chre/core/event_loop.h"
 #include <cinttypes>
 #include <cstdint>
+#include <cstdlib>
 #include <type_traits>
 
 #include "chre/core/event.h"
@@ -31,6 +32,7 @@
 #include "chre/util/lock_guard.h"
 #include "chre/util/system/debug_dump.h"
 #include "chre/util/system/event_callbacks.h"
+#include "chre/util/system/message_common.h"
 #include "chre/util/system/stats_container.h"
 #include "chre/util/throttle.h"
 #include "chre/util/time.h"
@@ -38,13 +40,17 @@
 
 using ::chre::message::EndpointInfo;
 using ::chre::message::EndpointType;
+using ::chre::message::RpcFormat;
+using ::chre::message::ServiceInfo;
 
 namespace chre {
 
-// Out of line declaration required for nonintegral static types
-constexpr Nanoseconds EventLoop::kIntervalWakeupBucket;
-
 namespace {
+
+//! The time interval of nanoapp wakeup buckets, adjust in conjunction with
+//! Nanoapp::kMaxSizeWakeupBuckets.
+constexpr Nanoseconds kIntervalWakeupBucket =
+    Nanoseconds(180 * kOneMinuteInNanoseconds);
 
 #ifndef CHRE_STATIC_EVENT_LOOP
 using DynamicMemoryPool =
@@ -148,6 +154,7 @@ void EventLoop::invokeMessageFreeFunction(uint64_t appId,
 
 void EventLoop::run() {
   LOGI("EventLoop start");
+  setCycleWakeupBucketsTimer();
 
   while (mRunning) {
     // Events are delivered in a single stage: they arrive in the inbound event
@@ -221,6 +228,12 @@ bool EventLoop::startNanoapp(UniquePtr<Nanoapp> &nanoapp) {
                       /*nanoappStarted=*/false);
       } else {
         notifyAppStatusChange(CHRE_EVENT_NANOAPP_STARTED, *newNanoapp);
+
+#ifdef CHRE_MESSAGE_ROUTER_SUPPORT_ENABLED
+        eventLoopManager->getChreMessageHubManager()
+            .getMessageHub()
+            .registerEndpoint(newNanoapp->getAppId());
+#endif  // CHRE_MESSAGE_ROUTER_SUPPORT_ENABLED
       }
     }
   }
@@ -484,6 +497,38 @@ void EventLoop::onMatchingNanoappEndpoint(
   }
 }
 
+void EventLoop::onMatchingNanoappService(
+    const pw::Function<bool(const EndpointInfo &, const ServiceInfo &)>
+        &function) {
+  ConditionalLockGuard<Mutex> lock(mNanoappsLock, !inEventLoopThread());
+
+  // Format for legacy service descriptors:
+  // serviceDescriptor = FORMAT_STRING(
+  //     "chre.nanoapp_0x%016" PRIX64 ".service_0x%016" PRIX64, nanoapp_id,
+  //     service_id)
+  // The length of the buffer is the length of the string above, plus one for
+  // the null terminator.
+  // The arguments to the ServiceInfo constructor are specified in the CHRE API.
+  // @see chrePublishRpcServices
+  constexpr size_t kBufferSize = 59;
+  char buffer[kBufferSize];
+
+  for (const UniquePtr<Nanoapp> &app : mNanoapps) {
+    const DynamicVector<struct chreNanoappRpcService> &services =
+        app->getRpcServices();
+    for (const struct chreNanoappRpcService &service : services) {
+      std::snprintf(buffer, kBufferSize,
+                    "chre.nanoapp_0x%016" PRIX64 ".service_0x%016" PRIX64,
+                    app->getAppId(), service.id);
+      ServiceInfo serviceInfo(buffer, service.version, /* minorVersion= */ 0,
+                              RpcFormat::PW_RPC_PROTOBUF);
+      if (function(getEndpointInfoFromNanoappLocked(*app.get()), serviceInfo)) {
+        return;
+      }
+    }
+  }
+}
+
 std::optional<EndpointInfo> EventLoop::getEndpointInfo(uint64_t appId) {
   ConditionalLockGuard<Mutex> lock(mNanoappsLock, !inEventLoopThread());
   Nanoapp *app = lookupAppByAppId(appId);
@@ -691,6 +736,12 @@ void EventLoop::unloadNanoappAtIndex(size_t index, bool nanoappStarted) {
   logDanglingResources("BLE scan", numDisabledBleScans);
 #endif  // CHRE_BLE_SUPPORT_ENABLED
 
+#ifdef CHRE_MESSAGE_ROUTER_SUPPORT_ENABLED
+  EventLoopManagerSingleton::get()
+      ->getChreMessageHubManager()
+      .unregisterEndpoint(nanoapp->getAppId());
+#endif  // CHRE_MESSAGE_ROUTER_SUPPORT_ENABLED
+
   const uint32_t numCancelledTimers =
       getTimerPool().cancelAllNanoappTimers(nanoapp.get());
   logDanglingResources("timers", numCancelledTimers);
@@ -706,15 +757,30 @@ void EventLoop::unloadNanoappAtIndex(size_t index, bool nanoappStarted) {
   mCurrentApp = nullptr;
 }
 
-void EventLoop::handleNanoappWakeupBuckets() {
-  Nanoseconds now = SystemTime::getMonotonicTime();
-  Nanoseconds duration = now - mTimeLastWakeupBucketCycled;
-  if (duration > kIntervalWakeupBucket) {
-    mTimeLastWakeupBucketCycled = now;
-    for (auto &nanoapp : mNanoapps) {
-      nanoapp->cycleWakeupBuckets(now);
-    }
+void EventLoop::setCycleWakeupBucketsTimer() {
+  if (mCycleWakeupBucketsHandle != CHRE_TIMER_INVALID) {
+    EventLoopManagerSingleton::get()->cancelDelayedCallback(
+        mCycleWakeupBucketsHandle);
   }
+
+  auto callback = [](uint16_t /*type*/, void * /*data*/, void * /*extraData*/) {
+    EventLoopManagerSingleton::get()
+        ->getEventLoop()
+        .handleNanoappWakeupBuckets();
+  };
+  mCycleWakeupBucketsHandle =
+      EventLoopManagerSingleton::get()->setDelayedCallback(
+          SystemCallbackType::CycleNanoappWakeupBucket, nullptr /*data*/,
+          callback, kIntervalWakeupBucket);
+}
+
+void EventLoop::handleNanoappWakeupBuckets() {
+  mTimeLastWakeupBucketCycled = SystemTime::getMonotonicTime();
+  for (auto &nanoapp : mNanoapps) {
+    nanoapp->cycleWakeupBuckets(mTimeLastWakeupBucketCycled);
+  }
+  mCycleWakeupBucketsHandle = CHRE_TIMER_INVALID;
+  setCycleWakeupBucketsTimer();
 }
 
 void EventLoop::logDanglingResources(const char *name, uint32_t count) {

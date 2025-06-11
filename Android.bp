@@ -57,6 +57,11 @@ filegroup {
 }
 
 filegroup {
+    name: "bluetooth_socket_hal_core",
+    srcs: ["host/hal_generic/common/bluetooth_socket_fbs_hal.cc"],
+}
+
+filegroup {
     name: "contexthub_hal_common_srcs",
     srcs: [
         "host/common/file_stream.cc",
@@ -64,6 +69,7 @@ filegroup {
         "host/common/host_protocol_host.cc",
         "host/common/log.cc",
         "host/hal_generic/common/context_hub_v4_impl.cc",
+        "host/hal_generic/common/host_protocol_host_v4.cc",
         "host/hal_generic/common/message_hub_manager.cc",
         "platform/shared/host_protocol_common.cc",
     ],
@@ -88,6 +94,7 @@ cc_defaults {
         "system/chre/host/hal_generic/aidl/",
         "system/chre/host/hal_generic/common/",
         "system/chre/platform/shared/include/",
+        "system/chre/platform/shared/fbs/include",
         "system/chre/util/include/",
     ],
     header_libs: [
@@ -131,6 +138,7 @@ cc_library_static {
     export_include_dirs: [
         "host/common/include",
         "platform/shared/include",
+        "platform/shared/fbs/include",
         "util/include",
     ],
     srcs: [
@@ -296,6 +304,7 @@ cc_binary {
     vendor: true,
     local_include_dirs: [
         "apps/power_test/common/include",
+        "apps/power_test/common/generated/include",
         "chre_api/include/chre_api",
         "util/include",
     ],
@@ -582,6 +591,7 @@ cc_test_host {
         "host/common/fragmented_load_transaction.cc",
         "host/common/hal_client.cc",
         "host/hal_generic/common/hal_client_manager.cc",
+        "host/hal_generic/common/message_hub_manager.cc",
         "host/test/**/*_test.cc",
     ],
     local_include_dirs: [
@@ -591,6 +601,7 @@ cc_test_host {
         "platform/android/include",
         "platform/include",
         "platform/shared/include/",
+        "platform/shared/fbs/include",
         "util/include/",
     ],
     static_libs: [
@@ -735,6 +746,7 @@ cc_library_static {
         "platform/include",
         "platform/linux/include",
         "platform/shared/include",
+        "platform/shared/fbs/include",
         "util/include",
     ],
     header_libs: [
@@ -778,6 +790,7 @@ cc_test_host {
         "platform/include",
         "platform/linux/include",
         "platform/shared/include",
+        "platform/shared/fbs/include",
         "platform/shared/pw_trace/include",
         "util/include",
     ],
@@ -789,6 +802,7 @@ cc_test_host {
         "libgmock",
         "pw_allocator",
         "pw_containers",
+        "pw_intrusive_ptr",
     ],
     defaults: [
         "chre_linux_cflags",
@@ -958,9 +972,15 @@ cc_test_host {
     static_libs: [
         "chre_linux",
         "chre_pal_linux",
+        "libgmock",
+        "libgtest",
         "libprotobuf-c-nano",
         "pw_allocator",
         "pw_containers",
+        "pw_intrusive_ptr",
+    ],
+    shared_libs: [
+        "libbase",
     ],
     defaults: [
         "chre_linux_cflags",
@@ -989,6 +1009,7 @@ cc_library_static {
         "core/gnss_manager.cc",
         "core/host_comms_manager.cc",
         "core/host_endpoint_manager.cc",
+        "core/host_message_hub_manager.cc",
         "core/init.cc",
         "core/nanoapp.cc",
         "core/sensor.cc",
@@ -1028,6 +1049,7 @@ cc_library_static {
         "platform/shared/chre_api_ble.cc",
         "platform/shared/chre_api_core.cc",
         "platform/shared/chre_api_gnss.cc",
+        "platform/shared/chre_api_msg.cc",
         "platform/shared/chre_api_re.cc",
         "platform/shared/chre_api_sensor.cc",
         "platform/shared/chre_api_user_settings.cc",
@@ -1059,6 +1081,7 @@ cc_library_static {
         "platform/linux/include",
         "platform/shared/audio_pal/include",
         "platform/shared/include",
+        "platform/shared/fbs/include",
         "platform/shared/public_platform_ble_pal",
         "platform/shared/public_platform_debug_dump_manager",
         "platform/shared/public_platform_gnss_pal",
@@ -1079,7 +1102,11 @@ cc_library_static {
         "libgmock",
         "libgtest",
         "pw_allocator",
+        "pw_intrusive_ptr",
         "pw_rpc_chre",
+    ],
+    shared_libs: [
+        "libbase",
     ],
     host_supported: true,
 }
@@ -1089,11 +1116,14 @@ cc_defaults {
     cflags: [
         "-DCHRE_ASSERTIONS_ENABLED=true",
         "-DCHRE_AUDIO_SUPPORT_ENABLED",
+        "-DCHRE_BLE_SOCKET_SUPPORT_ENABLED",
         "-DCHRE_BLE_SUPPORT_ENABLED",
         "-DCHRE_FILENAME=__FILE__",
         "-DCHRE_FIRST_SUPPORTED_API_VERSION=CHRE_API_VERSION_1_1",
         "-DCHRE_GNSS_SUPPORT_ENABLED",
         "-DCHRE_LARGE_PAYLOAD_MAX_SIZE=32000",
+        "-DCHRE_MESSAGE_ROUTER_MAX_HOST_ENDPOINTS=8",
+        "-DCHRE_MESSAGE_ROUTER_MAX_HOST_HUBS=2",
         "-DCHRE_MESSAGE_ROUTER_SUPPORT_ENABLED",
         "-DCHRE_MESSAGE_TO_HOST_MAX_SIZE=4096",
         "-DCHRE_MINIMUM_LOG_LEVEL=CHRE_LOG_LEVEL_DEBUG",
@@ -1121,6 +1151,7 @@ cc_defaults {
         "external/flatbuffers/include",
         "host/common/include",
         "platform/shared/include",
+        "platform/shared/fbs/include",
         "util/include",
     ],
     srcs: [
@@ -1281,4 +1312,22 @@ cc_aconfig_library {
     aconfig_declarations: "chre_flags",
     host_supported: true,
     vendor_available: true,
+}
+
+filegroup {
+    name: "chre_daemon_srcs",
+    srcs: [
+        "host/common/bt_snoop_log_parser.cc",
+        "host/common/config_util.cc",
+        "host/common/daemon_base.cc",
+        "host/common/fbs_daemon_base.cc",
+        "host/common/file_stream.cc",
+        "host/common/fragmented_load_transaction.cc",
+        "host/common/host_protocol_host.cc",
+        "host/common/log_message_parser.cc",
+        "host/common/socket_server.cc",
+        "host/common/st_hal_lpma_handler.cc",
+        "host/common/wifi_ext_hal_handler.cc",
+        "platform/shared/host_protocol_common.cc",
+    ],
 }

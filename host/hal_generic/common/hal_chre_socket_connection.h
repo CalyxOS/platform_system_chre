@@ -17,9 +17,12 @@
 #ifndef ANDROID_HARDWARE_CONTEXTHUB_COMMON_CHRE_SOCKET_H
 #define ANDROID_HARDWARE_CONTEXTHUB_COMMON_CHRE_SOCKET_H
 
+#include <flatbuffers/flatbuffers.h>
 #include <condition_variable>
 #include <mutex>
 
+#include "bluetooth_socket_offload_link.h"
+#include "bluetooth_socket_offload_link_callback.h"
 #include "chre_host/fragmented_load_transaction.h"
 #include "chre_host/host_protocol_host.h"
 #include "chre_host/socket_client.h"
@@ -70,9 +73,11 @@ class IChreSocketCallback {
       const ::chre::fbs::NanoappListResponseT &response) = 0;
 
   /**
-   * Invoked when CHRE restarts.
+   * Invoked on connection to CHRE.
+   *
+   * @param restart true if CHRE restarted since the first connection
    */
-  virtual void onContextHubRestarted() = 0;
+  virtual void onContextHubConnected(bool restart) = 0;
 
   /**
    * Invoked when a data is available as a result of a debug dump request
@@ -103,7 +108,12 @@ class IChreSocketCallback {
 /**
  * A helper class that can be used to connect to the CHRE socket.
  */
-class HalChreSocketConnection {
+class HalChreSocketConnection : public ::aidl::android::hardware::bluetooth::
+                                    socket::impl::BluetoothSocketOffloadLink {
+ private:
+  using BluetoothSocketOffloadLinkCallback = ::aidl::android::hardware::
+      bluetooth::socket::impl::BluetoothSocketOffloadLinkCallback;
+
  public:
   HalChreSocketConnection(IChreSocketCallback *callback);
 
@@ -126,7 +136,7 @@ class HalChreSocketConnection {
   bool sendSettingChangedNotification(::chre::fbs::Setting fbsSetting,
                                       ::chre::fbs::SettingState fbsState);
 
-  bool sendRawMessage(uint8_t *data, size_t size);
+  bool sendRawMessage(void *data, size_t size);
 
   bool onHostEndpointConnected(uint16_t hostEndpointId, uint8_t type,
                                const std::string &package_name,
@@ -142,6 +152,18 @@ class HalChreSocketConnection {
    * transaction.
    */
   bool isLoadTransactionPending();
+
+  // Implementation of the BluetoothSocketOffloadLink interface:
+  bool initOffloadLink() {
+    return true;
+  }
+
+  bool sendMessageToOffloadStack(void *data, size_t size) override {
+    return sendRawMessage(data, size);
+  }
+
+  void setBluetoothSocketCallback(
+      BluetoothSocketOffloadLinkCallback *btSocketCallback) override;
 
  private:
   class SocketCallbacks : public ::android::chre::SocketClient::ICallbacks,
@@ -168,10 +190,14 @@ class HalChreSocketConnection {
         const ::chre::fbs::DebugDumpResponseT &response) override;
     bool handleContextHubV4Message(
         const ::chre::fbs::ChreMessageUnion &message) override;
+    void handleBluetoothSocketMessage(const void *message, size_t messageLen);
+    void setBluetoothSocketCallback(
+        BluetoothSocketOffloadLinkCallback *btSocketCallback);
 
    private:
     HalChreSocketConnection &mParent;
     IChreSocketCallback *mCallback = nullptr;
+    BluetoothSocketOffloadLinkCallback *mBtSocketCallback = nullptr;
     bool mHaveConnected = false;
   };
 

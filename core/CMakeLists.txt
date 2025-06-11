@@ -5,7 +5,6 @@ pw_add_library(chre.core STATIC
     include/chre/core/host_comms_manager.h
     include/chre/core/settings.h
     include/chre/core/audio_request_manager.h
-    include/chre/core/api_manager_common.h
     include/chre/core/wifi_request_manager.h
     include/chre/core/event_ref_queue.h
     include/chre/core/sensor_request_multiplexer.h
@@ -13,7 +12,6 @@ pw_add_library(chre.core STATIC
     include/chre/core/gnss_manager.h
     include/chre/core/init.h
     include/chre/core/timer_pool.h
-    include/chre/core/event_loop_common.h
     include/chre/core/sensor_type.h
     include/chre/core/wwan_request_manager.h
     include/chre/core/event_loop.h
@@ -35,6 +33,8 @@ pw_add_library(chre.core STATIC
     include/chre/core/event.h
     include/chre/core/ble_request.h
     include/chre/core/host_endpoint_manager.h
+    include/chre/core/ble_l2cap_coc_socket_data.h
+    include/chre/core/ble_socket_manager.h
   PUBLIC_INCLUDES
     include
   PUBLIC_DEPS

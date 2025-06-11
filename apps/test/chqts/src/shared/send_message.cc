@@ -14,6 +14,7 @@
  * limitations under the License.
  */
 
+#include <shared/macros.h>
 #include <shared/send_message.h>
 
 #include <inttypes.h>
@@ -31,6 +32,12 @@
 
 namespace nanoapp_testing {
 
+namespace {
+// If true, indicates that a test has failed. This variable is used to guard
+// against sending additional messages to the host when the test already failed.
+bool gTestFailed = false;
+}  // namespace
+
 constexpr size_t kAllocSize = 128;
 
 static ChunkAllocator<kAllocSize, 4> gChunkAlloc;
@@ -38,14 +45,13 @@ static ChunkAllocator<kAllocSize, 4> gChunkAlloc;
 static void freeChunkAllocMessage(void *message, size_t messageSize) {
   if (messageSize > kAllocSize) {
     uint32_t localSize = uint32_t(messageSize);
-    sendFatalFailureToHost("freeChunkAllocMessage given oversized message:",
-                           &localSize);
+    EXPECT_FAIL_RETURN("freeChunkAllocMessage given oversized message:",
+                       &localSize);
   }
   if (!gChunkAlloc.free(message)) {
     uint32_t localPtr =
         reinterpret_cast<size_t>(message) & UINT32_C(0xFFFFFFFF);
-    sendFatalFailureToHost("freeChunkAllocMessage given bad pointer:",
-                           &localPtr);
+    EXPECT_FAIL_RETURN("freeChunkAllocMessage given bad pointer:", &localPtr);
   }
 }
 
@@ -53,8 +59,7 @@ static void freeHeapMessage(void *message, size_t /* messageSize */) {
   if (gChunkAlloc.contains(message)) {
     uint32_t localPtr =
         reinterpret_cast<size_t>(message) & UINT32_C(0xFFFFFFFF);
-    sendFatalFailureToHost("freeHeapMessage given ChunkAlloc pointer:",
-                           &localPtr);
+    EXPECT_FAIL_RETURN("freeHeapMessage given ChunkAlloc pointer:", &localPtr);
   }
   chreHeapFree(message);
 }
@@ -112,6 +117,15 @@ static void *prependMessageType(MessageType messageType, void *memory) {
 
 static void internalSendMessage(MessageType messageType, void *data,
                                 size_t dataSize, bool ChunkAlloc) {
+  if (gTestFailed) {
+    LOGW("Test already failed: skipping sending message type %" PRIu32,
+         messageType);
+    return;
+  } else if (messageType == MessageType::kFailure ||
+             messageType == MessageType::kInternalFailure) {
+    gTestFailed = true;
+  }
+
   // Note that if the CHRE implementation occasionally drops a message
   // here, then tests will become flaky.  For now, we consider that to
   // be a flaky CHRE implementation which should fail testing.
@@ -166,34 +180,18 @@ void sendStringToHost(MessageType messageType, const char *message,
   internalSendMessage(messageType, fullMessage, fullMessageLen, ChunkAlloc);
 }
 
-// Before we abort the nanoapp, we also put this message in the LOGI().
-// We have no assurance our message will make it to the Host (not required
-// for CHRE implementations), but this will at least make sure our message
-// hits the log.
-static void logFatalMessage(const char *message, const uint32_t *value) {
+void logFailureMessage(const char *message, const uint32_t *value) {
   if (value != nullptr) {
-    LOGE("TEST ABORT: %s0x%08" PRIX32, message, *value);
+    LOGE("TEST FAIL: %s0x%08" PRIX32, message, *value);
   } else {
-    LOGE("TEST ABORT: %s", message);
+    LOGE("TEST FAIL: %s", message);
   }
-}
-
-void sendFatalFailureToHost(const char *message, const uint32_t *value,
-                            AbortBlame reason) {
-  sendFailureToHost(message, value);
-  logFatalMessage(message, value);
-  nanoapp_testing::abort(reason);
-}
-
-void sendFatalFailureToHostUint8(const char *message, uint8_t value) {
-  uint32_t val = value;
-  sendFatalFailureToHost(message, &val);
 }
 
 void sendInternalFailureToHost(const char *message, const uint32_t *value,
                                AbortBlame reason) {
   sendStringToHost(MessageType::kInternalFailure, message, value);
-  logFatalMessage(message, value);
+  logFailureMessage(message, value);
   nanoapp_testing::abort(reason);
 }
 

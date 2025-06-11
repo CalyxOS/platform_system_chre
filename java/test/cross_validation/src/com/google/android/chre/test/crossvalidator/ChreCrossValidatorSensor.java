@@ -93,6 +93,15 @@ public class ChreCrossValidatorSensor
     // test start-up.
     private List<Sensor> mSensorList = new ArrayList<Sensor>();
 
+    // The name of the sensor that CHRE are intended to collect data from.
+    // Note that although we can try to configure which sensor to use on CHRE by setting
+    // SensorInfoCommand.sensorName, CHRE might not support multiple sensor so it's always going
+    // to use default sensor, which is why we need to double check which sensor to use on the host
+    // side.
+    private String mChreUsedSensorName = null;
+
+    private int mCurrentTestingSensorType;
+
     // The current sensor that is being cross-validated. These variables should be re-generated for
     // each sensor that is tested.
     private Sensor mSensor;
@@ -148,6 +157,8 @@ public class ChreCrossValidatorSensor
             String.format("Sensor could not be instantiated for sensor type %d, " +
                               "skipping this test", apSensorType),
             mSensorList.size() > 0);
+
+        mCurrentTestingSensorType = apSensorType;
     }
 
     @Override
@@ -167,6 +178,7 @@ public class ChreCrossValidatorSensor
                             TimeUnit.MICROSECONDS.toMillis(mSensor.getMaxDelay()));
 
             verifyChreSensorIsPresent();
+            updateTestingSensor();
             if (!mChreSensorIndex.isPresent()) {
                 // All CHRE sensors are optional so skip this test if the sensor isn't found.
                 Log.d(TAG, "Sensor was not present in CHRE - skip");
@@ -239,6 +251,41 @@ public class ChreCrossValidatorSensor
         }
     }
 
+    // Update the host side testing sensor if CHRE reports that it's going to test
+    // another sensor.
+    private void updateTestingSensor() {
+        if (mChreUsedSensorName == null) {
+            Log.w(TAG, "mChreUsedSensorName == null");
+            return;
+        }
+        if (mSensor.getName() != null && mSensor.getName().equals(mChreUsedSensorName)) {
+            Log.d(TAG, "Host/CHRE sensor matches, no need to update test sensor");
+            return;
+        }
+        int matchedCount = 0;
+        for (Sensor sensor : mSensorList) {
+            if (sensor.getName() == null) {
+                Log.w(TAG, "sensor.getName() == null");
+                continue;
+            }
+            // We know that sometimes host side sensor name will have additional postfixes.
+            if (sensor.getName().contains(mChreUsedSensorName)
+                    && sensor.getType() == mCurrentTestingSensorType) {
+                Log.d(TAG, "Updating test sensor to [CHRE: " + mChreUsedSensorName
+                         + "],[Android: " + sensor.getName() + "]");
+                mSensor = sensor;
+                matchedCount += 1;
+            }
+        }
+        if (matchedCount == 0) {
+            Log.e(TAG, "Cannot find the same sensor on host that has name ["
+                    + mChreUsedSensorName + "]");
+        } else if (matchedCount > 1) {
+            Log.w(TAG, "Found more than one sensor that matches ["
+                    + mChreUsedSensorName + "]");
+        }
+    }
+
     private void parseInfoResponseFromNanoappMessage(NanoAppMessage message) {
         ChreCrossValidationSensor.SensorInfoResponse infoProto;
         try {
@@ -262,6 +309,12 @@ public class ChreCrossValidatorSensor
 
         if (infoProto.getIsAvailable()) {
             mChreSensorIndex = Optional.of(infoProto.getSensorIndex());
+        }
+
+        if (infoProto.hasSensorName()) {
+            mChreUsedSensorName = infoProto.getSensorName().toStringUtf8();
+        } else {
+            Log.w(TAG, "No sensor name coming from nanoapp");
         }
         mAwaitDataLatch.countDown();
     }
@@ -357,13 +410,13 @@ public class ChreCrossValidatorSensor
     @Override
     public void init() throws AssertionError {
         super.init();
-        restrictSensors();
+        ChreTestUtil.restrictSensors("ChreCrossValidatorSensor");
     }
 
     @Override
     public void deinit() throws AssertionError {
         super.deinit();
-        unrestrictSensors();
+        ChreTestUtil.unrestrictSensors();
     }
 
     /*
@@ -500,22 +553,6 @@ public class ChreCrossValidatorSensor
         }
         mApDatapointsArray = newApSensorDatapoints.toArray(new ApSensorDatapoint[0]);
         mChreDatapointsArray = newChreSensorDatapoints.toArray(new ChreSensorDatapoint[0]);
-    }
-
-    /**
-     * Restrict other applications from accessing sensors. Should be called before validating data.
-     */
-    private void restrictSensors() {
-        ChreTestUtil.executeShellCommand(InstrumentationRegistry.getInstrumentation(),
-                "dumpsys sensorservice restrict ChreCrossValidatorSensor");
-    }
-
-    /**
-     * Unrestrict other applications from accessing sensors. Should be called after validating data.
-     */
-    private void unrestrictSensors() {
-        ChreTestUtil.executeShellCommand(
-                InstrumentationRegistry.getInstrumentation(), "dumpsys sensorservice enable");
     }
 
     @Override

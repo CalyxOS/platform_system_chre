@@ -101,13 +101,6 @@ class EventLoop : public NonCopyable {
    */
   bool findNanoappInstanceIdByAppId(uint64_t appId, uint16_t *instanceId) const;
 
-  /*
-   * Checks if the new wakeup buckets need to be pushed to nanoapps because the
-   * wakeup bucket interval has been surpassed since we pushed and pushes to the
-   * apps.
-   */
-  void handleNanoappWakeupBuckets();
-
   /**
    * Iterates over the list of Nanoapps managed by this EventLoop, and invokes
    * the supplied callback for each one. This holds a lock if necessary, so it
@@ -383,6 +376,18 @@ class EventLoop : public NonCopyable {
       const pw::Function<bool(const message::EndpointInfo &)> &function);
 
   /**
+   * Executes function for each service provided by a nanoapp in the event
+   * loop. If function returns true, the iteration will stop.
+   *
+   * This function is safe to call from any thread.
+   *
+   * @param function The function to execute for each service.
+   */
+  void onMatchingNanoappService(
+      const pw::Function<bool(const message::EndpointInfo &,
+                              const message::ServiceInfo &)> &function);
+
+  /**
    * Returns the EndpointInfo for the given nanoapp.
    *
    * This function is safe to call from any thread.
@@ -444,10 +449,6 @@ class EventLoop : public NonCopyable {
   //! distributed out to apps yet.
   BlockingSegmentedQueue<Event *, kEventPerBlock> mEvents;
 #endif
-  //! The time interval of nanoapp wakeup buckets, adjust in conjunction with
-  //! Nanoapp::kMaxSizeWakeupBuckets.
-  static constexpr Nanoseconds kIntervalWakeupBucket =
-      Nanoseconds(180 * kOneMinuteInNanoseconds);
 
   //! The last time wakeup buckets were pushed onto the nanoapps.
   Nanoseconds mTimeLastWakeupBucketCycled;
@@ -484,6 +485,9 @@ class EventLoop : public NonCopyable {
 
   //! The number of events dropped due to capacity limits
   uint32_t mNumDroppedLowPriEvents = 0;
+
+  //! The timer used to cycle nanoapp wakeup buckets.
+  TimerHandle mCycleWakeupBucketsHandle = CHRE_TIMER_INVALID;
 
   /**
    * Modifies the run loop state so it no longer iterates on new events. This
@@ -628,6 +632,17 @@ class EventLoop : public NonCopyable {
    */
   message::EndpointInfo getEndpointInfoFromNanoappLocked(
       const Nanoapp &nanoapp);
+
+  /*
+   * Pushes new wakeup buckets that need to be pushed to nanoapps.
+   */
+  void handleNanoappWakeupBuckets();
+
+  /*
+   * Set up the timer used for calling handleNanoappWakeupBuckets() to cycle
+   * wakeup buckets once the wakeup bucket interval has been surpassed.
+   */
+  void setCycleWakeupBucketsTimer();
 };
 
 }  // namespace chre

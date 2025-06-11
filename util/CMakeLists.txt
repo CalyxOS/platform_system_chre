@@ -115,6 +115,7 @@ pw_add_library(chre.util.nanoapp STATIC
     chre.chre_api
     chre.platform.assert
     chre.platform.log
+    chre.platform.tagged_log
     chre.util
     chre.variant.config
     pw_tokenizer
@@ -159,7 +160,9 @@ pw_add_library(chre.util.system STATIC
   HEADERS
     include/chre/util/system/atomic_spsc_queue.h
     include/chre/util/system/ble_util.h
+    include/chre/util/system/chre_error_util.h
     include/chre/util/system/debug_dump.h
+    include/chre/util/system/error_util.h
     include/chre/util/system/event_callbacks.h
     include/chre/util/system/fixed_size_blocking_queue.h
     include/chre/util/system/fixed_size_blocking_queue_impl.h
@@ -168,6 +171,7 @@ pw_add_library(chre.util.system STATIC
     include/chre/util/system/napp_header_utils.h
     include/chre/util/system/napp_permissions.h
     include/chre/util/system/ref_base.h
+    include/chre/util/system/service_helpers.h
     include/chre/util/system/shared_ptr.h
     include/chre/util/system/shared_ptr_impl.h
     include/chre/util/system/synchronized_expandable_memory_pool.h
@@ -175,6 +179,7 @@ pw_add_library(chre.util.system STATIC
     include/chre/util/system/synchronized_memory_pool.h
     include/chre/util/system/synchronized_memory_pool_impl.h
     include/chre/util/system/stats_container.h
+    include/chre/util/system/system_callback_type.h
     include/chre/util/system/transaction_manager.h
     include/chre/util/system/transaction_manager_impl.h
     include/chre/util/system/wifi_util.h
@@ -191,11 +196,15 @@ pw_add_library(chre.util.system STATIC
     chre.util
     chre.variant.config
     pw_allocator.deallocator
+    pw_containers.vector
+    pw_intrusive_ptr
   SOURCES
     system/ble_util.cc
+    system/error_util.cc
     system/event_callbacks.cc
     system/debug_dump.cc
     system/message_router.cc
+    system/service_helpers.cc
   PRIVATE_DEPS
     chre.platform.log
 )

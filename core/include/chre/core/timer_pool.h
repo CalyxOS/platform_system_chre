@@ -20,17 +20,17 @@
 #include <cstdint>
 #include "chre_api/chre/re.h"
 
-#include "chre/core/event_loop_common.h"
 #include "chre/core/nanoapp.h"
 #include "chre/platform/mutex.h"
 #include "chre/platform/system_timer.h"
 #include "chre/util/non_copyable.h"
 #include "chre/util/priority_queue.h"
+#include "chre/util/system/system_callback_type.h"
 
 namespace chre {
 
 // Forward declaration needed to friend TimerPool.
-class TestTimer;
+class TimerTest;
 
 /**
  * The type to use when referring to a timer instance.
@@ -120,8 +120,8 @@ class TimerPool : public NonCopyable {
   }
 
  private:
-  // Allows TestTimer to access hasNanoappTimers.
-  friend class TestTimer;
+  // Allows TimerTest to access hasNanoappTimers.
+  friend class TimerTest;
 
   /**
    * Tracks metadata associated with a request for a timed event.

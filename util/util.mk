@@ -10,6 +10,7 @@ PIGWEED_CHRE_DIR = $(ANDROID_BUILD_TOP)/system/chre/external/pigweed
 # Common Compiler Flags ########################################################
 
 # Include paths.
+COMMON_CFLAGS += -I$(CHRE_PREFIX)/core/include
 COMMON_CFLAGS += -I$(CHRE_PREFIX)/util/include
 
 # Pigweed ######################################################################
@@ -18,18 +19,24 @@ COMMON_CFLAGS += -I$(PIGWEED_CHRE_DIR)/pw_log_nanoapp/public_overrides
 COMMON_CFLAGS += -I$(PIGWEED_CHRE_DIR)/pw_assert_nanoapp/public_overrides
 COMMON_CFLAGS += -I$(PIGWEED_DIR)/pw_allocator/public
 COMMON_CFLAGS += -I$(PIGWEED_DIR)/pw_assert/public
+COMMON_CFLAGS += -I$(PIGWEED_DIR)/pw_bytes/public
 COMMON_CFLAGS += -I$(PIGWEED_DIR)/pw_containers/public
 COMMON_CFLAGS += -I$(PIGWEED_DIR)/pw_function/public
+COMMON_CFLAGS += -I$(PIGWEED_DIR)/pw_intrusive_ptr/public
 COMMON_CFLAGS += -I$(PIGWEED_DIR)/pw_log/public
+COMMON_CFLAGS += -I$(PIGWEED_DIR)/pw_numeric/public
 COMMON_CFLAGS += -I$(PIGWEED_DIR)/pw_polyfill/public
 COMMON_CFLAGS += -I$(PIGWEED_DIR)/pw_preprocessor/public
 COMMON_CFLAGS += -I$(PIGWEED_DIR)/pw_result/public
 COMMON_CFLAGS += -I$(PIGWEED_DIR)/pw_span/public
 COMMON_CFLAGS += -I$(PIGWEED_DIR)/pw_status/public
+COMMON_CFLAGS += -I$(PIGWEED_DIR)/pw_toolchain/public
 COMMON_CFLAGS += -I$(PIGWEED_DIR)/third_party/fuchsia/repo/sdk/lib/fit/include
 COMMON_CFLAGS += -I$(PIGWEED_DIR)/third_party/fuchsia/repo/sdk/lib/stdcompat/include
 
-COMMON_SRCS += $(PIGWEED_DIR)/pw_allocator/unique_ptr.cc
+COMMON_SRCS += $(PIGWEED_DIR)/pw_allocator/allocator.cc
+COMMON_SRCS += $(PIGWEED_DIR)/pw_allocator/managed_ptr.cc
+COMMON_SRCS += $(PIGWEED_DIR)/pw_containers/intrusive_item.cc
 
 # Common Source Files ##########################################################
 
@@ -45,9 +52,11 @@ COMMON_SRCS += $(CHRE_PREFIX)/util/nanoapp/debug.cc
 COMMON_SRCS += $(CHRE_PREFIX)/util/nanoapp/string.cc
 COMMON_SRCS += $(CHRE_PREFIX)/util/nanoapp/wifi.cc
 COMMON_SRCS += $(CHRE_PREFIX)/util/system/ble_util.cc
+COMMON_SRCS += $(CHRE_PREFIX)/util/system/error_util.cc
 COMMON_SRCS += $(CHRE_PREFIX)/util/system/event_callbacks.cc
 COMMON_SRCS += $(CHRE_PREFIX)/util/system/debug_dump.cc
 COMMON_SRCS += $(CHRE_PREFIX)/util/system/message_router.cc
+COMMON_SRCS += $(CHRE_PREFIX)/util/system/service_helpers.cc
 
 # GoogleTest Source Files ######################################################
 

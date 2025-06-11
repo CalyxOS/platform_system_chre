@@ -20,6 +20,7 @@
 #include "hal_chre_socket_connection.h"
 
 #include <log/log.h>
+#include <cstddef>
 
 #ifdef CHRE_HAL_SOCKET_METRICS_ENABLED
 #include <chre_atoms_log.h>
@@ -146,7 +147,7 @@ bool HalChreSocketConnection::requestDebugDump() {
   return mClient.sendMessage(builder.GetBufferPointer(), builder.GetSize());
 }
 
-bool HalChreSocketConnection::sendRawMessage(uint8_t *data, size_t size) {
+bool HalChreSocketConnection::sendRawMessage(void *data, size_t size) {
   return mClient.sendMessage(data, size);
 }
 
@@ -179,6 +180,11 @@ bool HalChreSocketConnection::isLoadTransactionPending() {
   return mPendingLoadTransaction.has_value();
 }
 
+void HalChreSocketConnection::setBluetoothSocketCallback(
+    BluetoothSocketOffloadLinkCallback *btSocketCallback) {
+  mSocketCallbacks->setBluetoothSocketCallback(btSocketCallback);
+}
+
 HalChreSocketConnection::SocketCallbacks::SocketCallbacks(
     HalChreSocketConnection &parent, IChreSocketCallback *callback)
     : mParent(parent), mCallback(callback) {}
@@ -191,11 +197,8 @@ void HalChreSocketConnection::SocketCallbacks::onMessageReceived(
 }
 
 void HalChreSocketConnection::SocketCallbacks::onConnected() {
-  ALOGI("Reconnected to CHRE daemon");
-  if (mHaveConnected) {
-    ALOGI("Reconnected to CHRE daemon");
-    mCallback->onContextHubRestarted();
-  }
+  ALOGI("Reconnected to CHRE daemon (restart: %d)", mHaveConnected);
+  mCallback->onContextHubConnected(mHaveConnected);
   mParent.sendDebugConfiguration();
   mHaveConnected = true;
 }
@@ -319,6 +322,16 @@ void HalChreSocketConnection::SocketCallbacks::handleDebugDumpResponse(
 bool HalChreSocketConnection::SocketCallbacks::handleContextHubV4Message(
     const ::chre::fbs::ChreMessageUnion &message) {
   return mCallback->onContextHubV4Message(message);
+}
+
+void HalChreSocketConnection::SocketCallbacks::handleBluetoothSocketMessage(
+    const void *message, size_t length) {
+  mBtSocketCallback->handleMessageFromOffloadStack(message, length);
+}
+
+void HalChreSocketConnection::SocketCallbacks::setBluetoothSocketCallback(
+    BluetoothSocketOffloadLinkCallback *btSocketCallback) {
+  mBtSocketCallback = btSocketCallback;
 }
 
 bool HalChreSocketConnection::isExpectedLoadResponseLocked(

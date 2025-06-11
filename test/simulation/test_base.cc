@@ -37,7 +37,7 @@ namespace chre {
 
 namespace {
 
-constexpr size_t kMaxMessageHubs = 2;
+constexpr size_t kMaxMessageHubs = 5;
 constexpr size_t kMaxSessions = 25;
 pw::Vector<MessageRouter::MessageHubRecord, kMaxMessageHubs> gMessageHubs;
 pw::Vector<Session, kMaxSessions> gSessions;
@@ -59,6 +59,8 @@ pw::Vector<Session, kMaxSessions> gSessions;
  * this test.
  */
 void TestBase::SetUp() {
+  setWaitTimeout(getTimeoutNs() / 2);
+
   MessageRouterSingleton::init(gMessageHubs, gSessions);
   chre::PlatformLogSingleton::init();
   TaskManagerSingleton::init();

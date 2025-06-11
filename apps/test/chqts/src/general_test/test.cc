@@ -17,8 +17,10 @@
 #include <general_test/test.h>
 
 #include <shared/abort.h>
+#include <shared/macros.h>
 #include <shared/send_message.h>
 #include <shared/time_util.h>
+#include <cinttypes>
 
 #include <chre/util/nanoapp/log.h>
 
@@ -26,8 +28,7 @@
 
 #define LOG_TAG "[Test]"
 
-using nanoapp_testing::sendFatalFailureToHost;
-using nanoapp_testing::sendFatalFailureToHostUint8;
+using nanoapp_testing::sendInternalFailureToHost;
 
 namespace general_test {
 
@@ -52,37 +53,36 @@ void Test::testHandleEvent(uint32_t senderInstanceId, uint16_t eventType,
 
 void Test::unexpectedEvent(uint16_t eventType) {
   uint32_t localEvent = eventType;
-  sendFatalFailureToHost("Test received unexpected event:", &localEvent);
+  EXPECT_FAIL_RETURN("Test received unexpected event:", &localEvent);
 }
 
 void Test::validateChreAsyncResult(const chreAsyncResult *result,
                                    const chreAsyncRequest &request) {
   if (!result->success) {
-    sendFatalFailureToHostUint8("chre async result error: %d",
-                                result->errorCode);
+    EXPECT_FAIL_RETURN_UINT8("chre async result error: ", result->errorCode);
   }
   if (result->success && result->errorCode != CHRE_ERROR_NONE) {
-    sendFatalFailureToHostUint8(
-        "Request was successfully processed, but got errorCode: %d",
+    EXPECT_FAIL_RETURN_UINT8(
+        "Request was successfully processed, but got errorCode: ",
         result->errorCode);
   }
   if (result->reserved != 0) {
-    sendFatalFailureToHostUint8("reserved should be 0, got: %d",
-                                result->reserved);
+    EXPECT_FAIL_RETURN_UINT8("reserved should be 0, got: ", result->reserved);
   }
   if (result->cookie != request.cookie) {
     LOGE("Request cookie is %p, got %p", request.cookie, result->cookie);
-    sendFatalFailureToHost("Request cookie mismatch");
+    EXPECT_FAIL_RETURN("Request cookie mismatch");
   }
   if (result->requestType != request.requestType) {
     LOGE("Request requestType is %d, got %d", request.requestType,
          result->requestType);
-    sendFatalFailureToHost("Request requestType mismatch");
+    EXPECT_FAIL_RETURN("Request requestType mismatch");
   }
   if (chreGetTime() - request.requestTimeNs > request.timeoutNs) {
-    nanoapp_testing::sendFatalFailureToHostUint8(
-        "Did not receive chreWifiAsyncEvent within %d seconds.",
-        request.timeoutNs / nanoapp_testing::kOneSecondInNanoseconds);
+    uint32_t time =
+        request.timeoutNs / nanoapp_testing::kOneSecondInNanoseconds;
+    EXPECT_FAIL_RETURN("Did not receive chreWifiAsyncEvent within time (sec): ",
+                       &time);
   }
 }
 
@@ -91,21 +91,21 @@ const void *Test::getMessageDataFromHostEvent(
     nanoapp_testing::MessageType expectedMessageType,
     uint32_t expectedMessageSize) {
   if (senderInstanceId != CHRE_INSTANCE_ID) {
-    sendFatalFailureToHost("Unexpected sender ID:", &senderInstanceId);
+    sendInternalFailureToHost("Unexpected sender ID:", &senderInstanceId);
   }
   if (eventType != CHRE_EVENT_MESSAGE_FROM_HOST) {
     unexpectedEvent(eventType);
   }
   if (eventData == nullptr) {
-    sendFatalFailureToHost("NULL eventData given");
+    sendInternalFailureToHost("NULL eventData given");
   }
   auto data = static_cast<const chreMessageFromHostData *>(eventData);
   if (data->reservedMessageType != uint32_t(expectedMessageType)) {
-    sendFatalFailureToHost("Unexpected reservedMessageType:",
-                           &(data->reservedMessageType));
+    sendInternalFailureToHost("Unexpected reservedMessageType:",
+                              &(data->reservedMessageType));
   }
   if (data->messageSize != expectedMessageSize) {
-    sendFatalFailureToHost("Unexpected messageSize:", &(data->messageSize));
+    sendInternalFailureToHost("Unexpected messageSize:", &(data->messageSize));
   }
   return data->message;
 }

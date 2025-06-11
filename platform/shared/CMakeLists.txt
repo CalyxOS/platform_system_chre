@@ -1,4 +1,5 @@
 include($ENV{PW_ROOT}/pw_build/pigweed.cmake)
+include($ENV{PW_ROOT}/pw_flatbuffers/flatbuffers.cmake)
 include(backend.cmake)
 
 pw_add_facade(chre.platform.shared.authentication INTERFACE
@@ -121,6 +122,43 @@ pw_add_library(chre.platform.shared.chre_api_core STATIC
 pw_add_library(chre.platform.shared.chre_api_gnss STATIC
   SOURCES
     chre_api_gnss.cc
+  PRIVATE_DEPS
+    chre.chre_api.facade
+    chre.core
+    chre.util
+    chre.util.system
+)
+
+# Implements chre_api/chre/msg.h's:
+# - bool chreMsgGetEndpointInfo(uint64_t hubId, uint64_t endpointId,
+#                               struct chreMsgEndpointInfo *info)
+# - size_t chreMsgGetEndpointServiceCount(uint64_t hubId, uint64_t endpointId)
+# - bool chreMsgGetEndpointServices(uint64_t hubId, uint64_t endpointId,
+#                                   struct chreMsgEndpointServiceInfo *services,
+#                                   size_t *numServices)
+# - bool chreMsgConfigureEndpointNotifications(uint64_t hubId,
+#                                              uint64_t endpointId,
+#                                              bool enable)
+# - bool chreMsgGetSessionInfo(uint16_t sessionId,
+#                              struct chreMsgEndpointSessionInfo *info)
+# - bool chreMsgPublishRpcServices(struct chreMsgEndpointServiceInfo *services,
+#                                  size_t numServices)
+# - uint16_t chreMsgOpenEndpointSessionAsync(uint64_t hubId,
+#                                            uint64_t endpointId)
+# - uint16_t chreMsgOpenEndpointSessionWithServiceAsync(
+#       uint64_t hubId, uint64_t endpointId, const char *serviceDescriptor)
+# - uint16_t chreMsgOpenDefaultEndpointSessionAsync(uint64_t endpointId)
+# - uint16_t chreMsgOpenDefaultEndpointSessionWithServiceAsync(
+#       uint64_t endpointId, const char *serviceDescriptor)
+# - uint16_t chreMsgOpenServiceEndpointSessionAsync(const char *serviceDescriptor)
+# - bool chreMsgCloseEndpointSessionAsync(uint16_t sessionId)
+# - bool chreMsgSendReliableEndpointMessageAsync(
+#       void *message, size_t messageSize, uint32_t messageType,
+#       uint16_t sessionId, uint32_t messagePermissions,
+#       chreMessageFreeFunction *freeCallback, const void *cookie)
+pw_add_library(chre.platform.shared.chre_api_msg STATIC
+  SOURCES
+    chre_api_msg.cc
   PRIVATE_DEPS
     chre.chre_api.facade
     chre.core
@@ -265,13 +303,18 @@ pw_add_library(chre.platform.shared.dlfcn STATIC
     chre.util
 )
 
-pw_add_library(chre.platform.shared.generated.host_messages_generated INTERFACE
-  HEADERS
-    include/chre/platform/shared/generated/host_messages_generated.h
-  PUBLIC_INCLUDES
-    include
-  PUBLIC_DEPS
+pw_flatbuffer_library(chre.platform.shared.idl.host_messages_generated
+  SOURCES
+    idl/host_messages.fbs
+  FLATC_FLAGS
+    --scoped-enums
+    --cpp-ptr-type chre::UniquePtr
+  DEPS
     chre_third_party.flatbuffers
+  PREFIX
+    chre/platform/shared/fbs
+  STRIP_PREFIX
+    idl
 )
 
 pw_add_library(chre.platform.shared.host_protocol_chre STATIC
@@ -281,10 +324,11 @@ pw_add_library(chre.platform.shared.host_protocol_chre STATIC
     include
   PUBLIC_DEPS
     chre.core
-    chre.platform.shared.generated.host_messages_generated
+    chre.platform.shared.idl.host_messages_generated.cpp
     chre.platform.shared.host_protocol_common
     chre.util
     chre.util.flatbuffers
+    chre.util.system
     chre.chre_api
     chre_third_party.flatbuffers
   SOURCES
@@ -293,7 +337,6 @@ pw_add_library(chre.platform.shared.host_protocol_chre STATIC
   PRIVATE_DEPS
     chre.core
     chre.platform.log
-    chre.platform.shared.host_protocol_chre
     chre.platform.shared.nanoapp_load_manager
 )
 
@@ -308,7 +351,7 @@ pw_add_library(chre.platform.shared.host_protocol_common STATIC
   SOURCES
     host_protocol_common.cc
   PRIVATE_DEPS
-    chre.platform.shared.generated.host_messages_generated
+    chre.platform.shared.idl.host_messages_generated.cpp
 )
 
 pw_add_library(chre.platform.shared.loader_util INTERFACE
@@ -329,7 +372,7 @@ pw_add_library(chre.platform.shared.log_buffer STATIC
     chre.core
     chre.platform.mutex
     chre.platform.shared.bt_snoop_log
-    chre.platform.shared.generated.host_messages_generated
+    chre.platform.shared.idl.host_messages_generated.cpp
   SOURCES
     log_buffer.cc
   PRIVATE_DEPS
@@ -352,7 +395,7 @@ pw_add_facade(chre.platform.shared.log_buffer_manager STATIC
     chre.platform.condition_variable
     chre.platform.mutex
     chre.platform.shared.bt_snoop_log.facade
-    chre.platform.shared.generated.host_messages_generated
+    chre.platform.shared.idl.host_messages_generated.cpp
     chre.platform.shared.log_buffer
     chre.util
   SOURCES
@@ -424,6 +467,7 @@ pw_add_facade(chre.platform.shared.nanoapp_loader STATIC
     chre.platform.assert
     chre.platform.fatal_error
     chre.platform.shared.chre_api_re
+    chre.platform.shared.chre_api_msg
     chre.platform.shared.dlfcn
     chre.platform.shared.memory
     chre.platform.shared.nanoapp_tokenized_log

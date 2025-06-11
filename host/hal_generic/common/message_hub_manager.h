@@ -28,7 +28,7 @@
 #include <utility>
 #include <vector>
 
-#include <aidl/android/hardware/contexthub/BnContextHub.h>
+#include <aidl/android/hardware/contexthub/IContextHub.h>
 #include <android-base/thread_annotations.h>
 
 #include "pw_result/result.h"
@@ -40,6 +40,10 @@ using ::aidl::android::hardware::contexthub::EndpointId;
 using ::aidl::android::hardware::contexthub::EndpointInfo;
 using ::aidl::android::hardware::contexthub::HubInfo;
 using ::aidl::android::hardware::contexthub::IEndpointCallback;
+using ::aidl::android::hardware::contexthub::Message;
+using ::aidl::android::hardware::contexthub::MessageDeliveryStatus;
+using ::aidl::android::hardware::contexthub::Reason;
+using ::aidl::android::hardware::contexthub::Service;
 
 /**
  * Stores host and embedded MessageHub objects and maintains global mappings.
@@ -52,42 +56,24 @@ class MessageHubManager {
    */
   class HostHub {
    public:
-    ~HostHub();
-
-    /**
-     * Sets the callback for sending endpoint events back to the HAL client
-     *
-     * @param callback The callback provided by the client
-     * @return pw::OkStatus() on success.
-     */
-    pw::Status setCallback(std::shared_ptr<IEndpointCallback> callback)
-        EXCLUDES(mManager.mLock);
-
-    /**
-     * Returns the callback registered in setCallback()
-     *
-     * @return The previously registered callback
-     */
-    std::shared_ptr<IEndpointCallback> getCallback() const
-        EXCLUDES(mManager.mLock);
+    ~HostHub() = default;
 
     /**
      * Adds an endpoint to this message hub
      *
-     * @param self Self-reference for mapping from hub id
      * @param info Description of the endpoint
      * @return pw::OkStatus() on success
      */
-    pw::Status addEndpoint(std::weak_ptr<HostHub> self,
-                           const EndpointInfo &info) EXCLUDES(mManager.mLock);
+    pw::Status addEndpoint(const EndpointInfo &info) EXCLUDES(mManager.mLock);
 
     /**
      * Removes an endpoint from this message hub
      *
      * @param info Id of endpoint to remove
-     * @return pw::OkStatus() on success
+     * @return List of sessions to prune on success
      */
-    pw::Status removeEndpoint(const EndpointId &info) EXCLUDES(mManager.mLock);
+    pw::Result<std::vector<uint16_t>> removeEndpoint(const EndpointId &info)
+        EXCLUDES(mManager.mLock);
 
     /**
      * Reserves a session id range to be used by this message hub
@@ -103,35 +89,34 @@ class MessageHubManager {
      *
      * The session is pending until updated by the destination endpoint.
      *
-     * @param self Self-reference to be stored in session state
-     * @param localId The id of an endpoint hosted by this hub
-     * @param remoteId The id of the remote endpoint
+     * @param hostEndpoint The id of an endpoint hosted by this hub
+     * @param embeddedEndpoint The id of the embedded endpoint
      * @param sessionId The id to be used for this session. Must be in the range
      * allocated to this hub
-     * @return On success, returns a possibly null reference to the HostHub
-     * which hosted an endpoint on a pruned session with the same id. If not
-     * null, the HostHub should be notified that the session has been closed.
+     * @param serviceDescriptor Optional service for the session
+     * @param hostInitiated true if the request came from a host endpoint
+     * @return pw::OkStatus() on success.
      */
-    pw::Result<std::shared_ptr<HostHub>> openSession(
-        std::weak_ptr<HostHub> self, const EndpointId &localId,
-        const EndpointId &remoteId, uint16_t sessionId)
-        EXCLUDES(mManager.mLock);
+    pw::Status openSession(const EndpointId &hostEndpoint,
+                           const EndpointId &embeddedEndpoint,
+                           uint16_t sessionId,
+                           std::optional<std::string> serviceDescriptor,
+                           bool hostInitiated) EXCLUDES(mManager.mLock);
 
     /**
      * Acks a pending session.
      *
      * @param id Session id
-     * @return pw::OkStatus() on success, pw::Status::Unavailable() if the
-     * session is gone due to an endpoint going down.
+     * @param hostAcked true if a host endpoint is acking the session
+     * @return pw::OkStatus() on success
      */
-    pw::Status ackSession(uint16_t id) EXCLUDES(mManager.mLock);
+    pw::Status ackSession(uint16_t id, bool hostAcked) EXCLUDES(mManager.mLock);
 
     /**
      * Checks that a session is open.
      *
      * @param id Session id
-     * @return pw::OkStatus() on success, pw::Status::Unavailable() if the
-     * session is gone due to an endpoint going down.
+     * @return pw::OkStatus() on success
      */
     pw::Status checkSessionOpen(uint16_t id) EXCLUDES(mManager.mLock);
 
@@ -139,64 +124,136 @@ class MessageHubManager {
      * Removes the given session and any local and global mappings
      *
      * @param id The session id
+     * @param reason If present, reason for closing to be passed to the host
+     * endpoint
      * @return pw::OkStatus() on success
      */
-    pw::Status closeSession(uint16_t id) EXCLUDES(mManager.mLock);
+    pw::Status closeSession(uint16_t id, std::optional<Reason> reason = {})
+        EXCLUDES(mManager.mLock);
+
+    /**
+     * Forwards a message to an endpoint on this hub.
+     *
+     * @param id The session in which the message was sent
+     * @param message The message
+     * @return pw::OkStatus() on success
+     */
+    pw::Status handleMessage(uint16_t sessionId, const Message &message)
+        EXCLUDES(mManager.mLock);
+
+    /**
+     * Forwards a message delivery status to an endpoint on this hub.
+     *
+     * @param id The session in which the message was sent
+     * @param status The message delivery status
+     * @return pw::OkStatus() on success
+     */
+    pw::Status handleMessageDeliveryStatus(uint16_t sessionId,
+                                           const MessageDeliveryStatus &status)
+        EXCLUDES(mManager.mLock);
+
+    /**
+     * Unregisters this HostHub.
+     *
+     * @return pw::OkStatus() if the host hub was successfully initialized and
+     * not yet unregistered.
+     */
+    pw::Status unregister() EXCLUDES(mManager.mLock);
+
+    /**
+     * Returns the list of endpoints registered on this hub.
+     */
+    std::vector<EndpointInfo> getEndpoints() const;
+
+    /**
+     * Returns the Message Hub info
+     */
+    const HubInfo &info() const {
+      return kInfo;
+    }
 
     /**
      * Returns the registered id of this message hub.
-     *
-     * @return kId
      */
-    int64_t id() const;
+    int64_t id() const {
+      return kInfo.hubId;
+    }
 
    private:
     friend class MessageHubManager;
+    friend class MessageHubManagerTest;
+
+    // Reresents a session between a host and embedded endpoint.
+    //
+    // A Session is created on an openSession() request (triggered either by a
+    // local or remote endpoint) with mPendingDestination unset via a call to
+    // ackSession*() from the destination endpoint. For Sessions started by
+    // embedded endpoints, an additional ackSession*() must be received from the
+    // CHRE MessageRouter after passing it the ack from the destination host
+    // endpoint. This unsets mPendingMessageRouter. A session is only open for
+    // messages once both mPendingDestination and mPendingMessageRouter are
+    // unset.
+    struct Session {
+      EndpointId mHostEndpoint;
+      EndpointId mEmbeddedEndpoint;
+      bool mPendingDestination = true;
+      bool mPendingMessageRouter;
+
+      Session(const EndpointId &hostEndpoint,
+              const EndpointId &embeddedEndpoint, bool hostInitiated)
+          : mHostEndpoint(hostEndpoint),
+            mEmbeddedEndpoint(embeddedEndpoint),
+            mPendingMessageRouter(!hostInitiated) {}
+    };
 
     // Cookie associated with each registered client callback.
     struct DeathRecipientCookie {
       MessageHubManager *manager;
-      pid_t pid;
+      int64_t hubId;
     };
 
     static constexpr uint16_t kSessionIdMaxRange = 1024;
 
     static constexpr int64_t kHubIdInvalid = 0;
 
-    HostHub(MessageHubManager &manager, pid_t pid)
-        : mManager(manager), kPid(pid) {}
+    HostHub(MessageHubManager &manager,
+            std::shared_ptr<IEndpointCallback> callback, const HubInfo &info);
 
     // Unlinks this hub from the manager, destroying internal references.
-    // Returns the id so that it can be propagated to CHRE.
-    int64_t unlinkFromManager() EXCLUDES(mManager.mLock);
-
-    // Unlink the current callback from the manager's death recipient.
-    void unlinkCallbackIfNecessaryLocked() REQUIRES(mManager.mLock);
+    // Propagates the unlinking to CHRE. If already unlinked, returns early with
+    // error.
+    pw::Status unlinkFromManager() EXCLUDES(mManager.mLock);
 
     // Returns pw::OkStatus() if the hub is in a valid state.
     pw::Status checkValidLocked() REQUIRES(mManager.mLock);
 
-    // Returns a shared_ptr to the given endpoint.
-    pw::Result<std::shared_ptr<EndpointInfo>> getEndpointLocked(
-        const EndpointId &id) REQUIRES(mManager.mLock);
+    // Returns pw::OkStatus() if the given endpoint (with service if given)
+    // exists on this hub.
+    pw::Status endpointExistsLocked(
+        const EndpointId &id, std::optional<std::string> serviceDescriptor)
+        REQUIRES(mManager.mLock);
 
     // Returns pw::OkStatus() if the session id is in range for this hub.
     bool sessionIdInRangeLocked(uint16_t id) REQUIRES(mManager.mLock);
 
+    // Returns pw::OkStatus() if the session is open.
+    pw::Status checkSessionOpenLocked(uint16_t id) REQUIRES(mManager.mLock);
+
+    // Returns a pointer to the session with given id.
+    pw::Result<Session *> getSessionLocked(uint16_t id)
+        REQUIRES(mManager.mLock);
+
     MessageHubManager &mManager;
-    const pid_t kPid;
+    std::shared_ptr<IEndpointCallback> mCallback;  // Callback to client.
+    DeathRecipientCookie *mCookie;  // Death cookie associated with mCallback.
+    const HubInfo kInfo;            // Details of this hub.
 
-    // Hub id, set when the first endpoint is registered.
-    int64_t kId GUARDED_BY(mManager.mLock) = kHubIdInvalid;
+    // Used to lookup a host endpoint.
+    std::unordered_map<int64_t, EndpointInfo> mIdToEndpoint
+        GUARDED_BY(mManager.mLock);
 
-    // Callback to HAL client.
-    std::shared_ptr<IEndpointCallback> mCallback GUARDED_BY(mManager.mLock);
-
-    // Cookie associated with mCallback.
-    DeathRecipientCookie *mCookie GUARDED_BY(mManager.mLock);
-
-    // Used to lookup a host endpoint. Owns the associated EndpointInfo.
-    std::unordered_map<int64_t, std::shared_ptr<EndpointInfo>> mIdToEndpoint
+    // Used to lookup state for sessions including an endpoint on this hub.
+    std::unordered_map<uint16_t, Session> mIdToSession
         GUARDED_BY(mManager.mLock);
 
     // Session id ranges allocated to this HostHub. The ranges are stored as a
@@ -209,78 +266,60 @@ class MessageHubManager {
   };
 
   // Callback registered to pass up the id of a host hub which disconnected.
-  using HostHubDownCb = std::function<void(int64_t hubId)>;
+  using HostHubDownCb =
+      std::function<void(std::function<pw::Result<int64_t>()> unlinkFn)>;
 
   // The base session id for sessions initiated from host endpoints.
   static constexpr uint16_t kHostSessionIdBase = 0x8000;
 
-  explicit MessageHubManager(HostHubDownCb cb);
+  explicit MessageHubManager(HostHubDownCb cb)
+      : mHostHubDownCb(std::move(cb)),
+        mDeathRecipient(std::make_unique<RealDeathRecipient>()) {}
   ~MessageHubManager() = default;
 
   /**
-   * Retrieves the HostHub instance for the calling process
+   * Registers a new client, creating a HostHub instance for it
    *
-   * This API should be used for any HostHub lookup coming from the
-   * IContextHub interface. The first call to this API by any client process
-   * will trigger the creation of a HostHub for that client.
-   *
-   * @param pid The caller's system process id
-   * @return shared_ptr to the HostHub instance
+   * @param callback Interface for communicating with the client
+   * @param info Details of the hub being registered
+   * @param uid The UID of the client
+   * @param pid The PID of the client
+   * @return On success, shared_ptr to the HostHub instance
    */
-  std::shared_ptr<HostHub> getHostHubByPid(pid_t pid) EXCLUDES(mLock);
+  pw::Result<std::shared_ptr<HostHub>> createHostHub(
+      std::shared_ptr<IEndpointCallback> callback, const HubInfo &info,
+      uid_t uid, pid_t pid) EXCLUDES(mLock);
 
   /**
-   * Retrieves the HostHub instance for the given EndpointId
+   * Retrieves a HostHub instance given its id
    *
-   * @param id The endpoint id hosted by the returned hub
-   * @return shared_ptr to the HostHub instance
+   * @param id The HostHub id
+   * @return shared_ptr to the HostHub instance, nullptr if not found
    */
-  std::shared_ptr<HostHub> getHostHubByEndpointId(const EndpointId &id)
-      EXCLUDES(mLock);
-
-  /**
-   * Checks that a given session is open and returns its HostHub.
-   *
-   * @param id Session id
-   * @return A strong reference to the HostHub. pw::Status::Unavailable()
-   * indicates that the session has been pruned.
-   */
-  pw::Result<std::shared_ptr<HostHub>> checkSessionOpenAndGetHostHub(
-      uint16_t id) EXCLUDES(mLock);
-
-  /**
-   * Acks a session open request.
-   *
-   * This is called both when the destination endpoint approves and also when
-   * MessageRouter gives a final ack on a session initiated from an embedded
-   * endpoint. See the documentation on the Session class.
-   *
-   * @param id Session id
-   * @return A strong reference to the HostHub. pw::Status::Unavailable()
-   * indicates that the session has been pruned.
-   */
-  pw::Result<std::shared_ptr<HostHub>> ackSessionAndGetHostHub(uint16_t id)
-      EXCLUDES(mLock);
+  std::shared_ptr<HostHub> getHostHub(int64_t id) EXCLUDES(mLock);
 
   /**
    * Apply the given function to each host hub.
    *
    * @param fn The function to apply.
    */
-  void forEachHostHub(std::function<void(HostHub &hub)> fn);
+  void forEachHostHub(std::function<void(HostHub &hub)> fn) EXCLUDES(mLock);
 
   /**
-   * Wipes and initializes the cache of embedded hubs and endpoints
+   * Wipes and marks the embedded state cache ready.
    *
    * This should only be called once during startup as it invalidates session
    * state (i.e. existing sessions will be pruned).
-   *
-   * @param hubs The list of message hubs
-   * @param endpoints The list of endpoints
    */
-  void initEmbeddedHubsAndEndpoints(const std::vector<HubInfo> &hubs,
-                                    const std::vector<EndpointInfo> &endpoints)
-      EXCLUDES(mLock);
+  void initEmbeddedState() EXCLUDES(mLock);
+
+  /**
+   * Clears cache of embedded state and closes all sessions.
+   *
+   * Called on CHRE disconnection. Invalidates the cache. initEmbeddedState()
+   * must be called again before sessions can be established.
+   */
+  void clearEmbeddedState() EXCLUDES(mLock);
 
   /**
    * Adds the given hub to the cache
@@ -295,9 +334,8 @@ class MessageHubManager {
    * Removes the hub with given id from the cache
    *
    * @param id The id of the hub to remove
-   * @return The ids of all endpoints on the embedded hub
    */
-  std::vector<EndpointId> removeEmbeddedHub(int64_t id) EXCLUDES(mLock);
+  void removeEmbeddedHub(int64_t id) EXCLUDES(mLock);
 
   /**
    * Returns the cached list of embedded message hubs
@@ -316,6 +354,24 @@ class MessageHubManager {
   void addEmbeddedEndpoint(const EndpointInfo &endpoint);
 
   /**
+   * Adds a service to an embedded endpoint in the cache
+   *
+   * Ignored if the endpoint is already marked ready
+   *
+   * @param endpoint the new endpoint being updated
+   * @param service the service being added
+   */
+  void addEmbeddedEndpointService(const EndpointId &endpoint,
+                                  const Service &service);
+
+  /**
+   * Sets the ready flag on an embedded endpoint
+   *
+   * @param id The id of the endpoint to remove
+   */
+  void setEmbeddedEndpointReady(const EndpointId &endpoint);
+
+  /**
    * Removes an embedded endpoint from the cache
    *
    * @param id The id of the endpoint to remove
@@ -330,69 +386,54 @@ class MessageHubManager {
   std::vector<EndpointInfo> getEmbeddedEndpoints() const EXCLUDES(mLock);
 
  private:
+  friend class MessageHubManagerTest;
+
   // Callback invoked when a client goes down.
   using UnlinkToDeathFn = std::function<bool(
       const std::shared_ptr<IEndpointCallback> &callback, void *cookie)>;
 
+  // Base class for a Binder DeathRecipient wrapper so that this functionality
+  // can be mocked in unit tests.
+  class DeathRecipient {
+   public:
+    virtual ~DeathRecipient() = default;
+
+    virtual pw::Status linkCallback(
+        const std::shared_ptr<IEndpointCallback> &callback,
+        HostHub::DeathRecipientCookie *cookie) = 0;
+
+    virtual pw::Status unlinkCallback(
+        const std::shared_ptr<IEndpointCallback> &callback,
+        HostHub::DeathRecipientCookie *cookie) = 0;
+
+   protected:
+    DeathRecipient() = default;
+  };
+
+  // Real implementation of DeathRecipient.
+  class RealDeathRecipient : public DeathRecipient {
+   public:
+    RealDeathRecipient();
+    RealDeathRecipient(RealDeathRecipient &&) = default;
+    RealDeathRecipient &operator=(RealDeathRecipient &&) = default;
+    virtual ~RealDeathRecipient() = default;
+
+    pw::Status linkCallback(const std::shared_ptr<IEndpointCallback> &callback,
+                            HostHub::DeathRecipientCookie *cookie) override;
+
+    pw::Status unlinkCallback(
+        const std::shared_ptr<IEndpointCallback> &callback,
+        HostHub::DeathRecipientCookie *cookie) override;
+
+   private:
+    ndk::ScopedAIBinder_DeathRecipient mDeathRecipient;
+  };
+
   // Represents an embedded MessageHub. Stores the hub details as well as a map
   // of all endpoints hosted by the hub.
   struct EmbeddedHub {
-    std::unordered_map<int64_t, std::shared_ptr<EndpointInfo>> idToEndpoint;
+    std::unordered_map<int64_t, std::pair<EndpointInfo, bool>> idToEndpoint;
     HubInfo info;
-  };
-
-  // Represents a session between a host and embedded endpoint. Only stores weak
-  // references to the endpoints and HostHub owning the host endpoint. Must be
-  // converted to a SessionStrongRef to temporarily access state. The weak
-  // references expire when the associated entity is unregistered. A
-  // SessionStrongRef cannot be created if any reference has expired.
-  //
-  // A Session is created on an openSession() request (triggered either by a
-  // local or remote endpoint) with mPendingDestination unset via a call to
-  // ackSession*() from the destination endpoint. For Sessions started by
-  // embedded endpoints, an additional ackSession*() must be received from the
-  // CHRE MessageRouter after passing it the ack from the destination host
-  // endpoint. This unsets mPendingMessageRouter. A session is only open for
-  // messages once both mPendingDestination and mPendingMessageRouter are unset.
-  struct SessionStrongRef;
-  class Session {
-   public:
-    Session(std::weak_ptr<HostHub> hub, std::weak_ptr<EndpointInfo> local,
-            std::weak_ptr<EndpointInfo> remote, bool hostInitiated)
-        : mHub(hub),
-          mLocal(local),
-          mRemote(remote),
-          mPendingMessageRouter(!hostInitiated) {}
-
-   private:
-    friend struct SessionStrongRef;
-
-    std::weak_ptr<HostHub> mHub;
-    std::weak_ptr<EndpointInfo> mLocal;
-    std::weak_ptr<EndpointInfo> mRemote;
-    bool mPendingDestination = true;
-    bool mPendingMessageRouter;
-  };
-
-  // A strong reference to a Session's underlying endpoints and HostHub as well
-  // as Session metadata. A SessionStrongRef should be created and destroyed
-  // within a single critical section.
-  struct SessionStrongRef {
-    std::shared_ptr<HostHub> hub;
-    std::shared_ptr<EndpointInfo> local;
-    std::shared_ptr<EndpointInfo> remote;
-    bool &pendingDestination;
-    bool &pendingMessageRouter;
-
-    SessionStrongRef(Session &session)
-        : hub(session.mHub.lock()),
-          local(session.mLocal.lock()),
-          remote(session.mRemote.lock()),
-          pendingDestination(session.mPendingDestination),
-          pendingMessageRouter(session.mPendingMessageRouter) {}
-    operator bool() const {
-      return hub && local && remote;
-    }
   };
 
   // The hub id reserved for the ContextHub service.
@@ -404,21 +445,30 @@ class MessageHubManager {
   // Invoked on client death. Cleans up references to the client.
   static void onClientDeath(void *cookie);
 
-  // Retrieves a strong reference to the session with given id.
-  pw::Result<SessionStrongRef> checkSessionLocked(uint16_t id) REQUIRES(mLock);
+  // Constructor used by tests to inject a mock DeathRecipient.
+  MessageHubManager(std::unique_ptr<DeathRecipient> deathRecipient,
+                    HostHubDownCb cb)
+      : mHostHubDownCb(std::move(cb)),
+        mDeathRecipient(std::move(deathRecipient)) {}
 
   // Adds an embedded endpoint to the cache.
   void addEmbeddedEndpointLocked(const EndpointInfo &endpoint) REQUIRES(mLock);
 
-  // Returns true if the embedded endpoint with given id is in the cache.
-  pw::Result<std::shared_ptr<EndpointInfo>> getEmbeddedEndpointLocked(
+  // Returns pw::OkStatus() if the given embedded endpoint (with service, if
+  // given), is in the cache.
+  pw::Status embeddedEndpointExistsLocked(
+      const EndpointId &id, std::optional<std::string> serviceDescriptor)
+      REQUIRES(mLock);
+
+  // Returns a pointer to an embedded endpoint entry if it exists.
+  pw::Result<std::pair<EndpointInfo, bool> *> lookupEmbeddedEndpointLocked(
       const EndpointId &id) REQUIRES(mLock);
 
   // Callback to pass up the id of a host hub for a client that disconnected.
   HostHubDownCb mHostHubDownCb;
 
   // Death recipient handling clients' disconnections.
-  ndk::ScopedAIBinder_DeathRecipient mDeathRecipient;
+  std::unique_ptr<DeathRecipient> mDeathRecipient;
 
   // Guards hub, endpoint, and session state.
   mutable std::mutex mLock;
@@ -426,22 +476,15 @@ class MessageHubManager {
   // Map of EmbeddedHubs.
   std::unordered_map<int64_t, EmbeddedHub> mIdToEmbeddedHub GUARDED_BY(mLock);
 
-  // Used to look up the HostHub associated with the client on IContextHub
-  // calls.
-  std::unordered_map<pid_t, std::shared_ptr<HostHub>> mPidToHostHub
+  // Map of HostHubs for registered IContextHub V4+ clients.
+  std::unordered_map<int64_t, std::shared_ptr<HostHub>> mIdToHostHub
       GUARDED_BY(mLock);
-
-  // Used when an embedded endpoint wants to start a session with an endpoint
-  // hosted by a specific HostHub.
-  std::unordered_map<int64_t, std::weak_ptr<HostHub>> mIdToHostHub
-      GUARDED_BY(mLock);
-
-  // Used to lookup the host endpoint to receive a message on an endpoint
-  // session.
-  std::unordered_map<uint16_t, Session> mIdToSession GUARDED_BY(mLock);
 
   // Next session id from which to allocate ranges.
   uint16_t mNextSessionId GUARDED_BY(mLock) = kHostSessionIdBase;
+
+  // True if the embedded hub cache is initialized.
+  bool mIdToEmbeddedHubReady GUARDED_BY(mLock) = false;
 };
 
 }  // namespace android::hardware::contexthub::common::implementation

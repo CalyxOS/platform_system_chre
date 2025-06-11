@@ -19,13 +19,14 @@
 
 #include "chre/core/audio_request_manager.h"
 #include "chre/core/ble_request_manager.h"
+#include "chre/core/ble_socket_manager.h"
 #include "chre/core/chre_message_hub_manager.h"
 #include "chre/core/debug_dump_manager.h"
 #include "chre/core/event_loop.h"
-#include "chre/core/event_loop_common.h"
 #include "chre/core/gnss_manager.h"
 #include "chre/core/host_comms_manager.h"
 #include "chre/core/host_endpoint_manager.h"
+#include "chre/core/host_message_hub_manager.h"
 #include "chre/core/sensor_request_manager.h"
 #include "chre/core/settings.h"
 #include "chre/core/system_health_monitor.h"
@@ -39,6 +40,7 @@
 #include "chre/util/fixed_size_vector.h"
 #include "chre/util/non_copyable.h"
 #include "chre/util/singleton.h"
+#include "chre/util/system/system_callback_type.h"
 #include "chre/util/unique_ptr.h"
 #include "chre_api/chre/event.h"
 
@@ -221,6 +223,13 @@ class EventLoopManager : public NonCopyable {
   BleRequestManager &getBleRequestManager() {
     return mBleRequestManager;
   }
+
+#ifdef CHRE_BLE_SOCKET_SUPPORT_ENABLED
+  BleSocketManager &getBleSocketManager() {
+    return mBleSocketManager;
+  }
+#endif  // CHRE_BLE_SOCKET_SUPPORT_ENABLED
+
 #endif  // CHRE_BLE_SUPPORT_ENABLED
 
   /**
@@ -326,6 +335,10 @@ class EventLoopManager : public NonCopyable {
   ChreMessageHubManager &getChreMessageHubManager() {
     return mChreMessageHubManager;
   }
+
+  HostMessageHubManager &getHostMessageHubManager() {
+    return mHostMessageHubManager;
+  }
 #endif  // CHRE_MESSAGE_ROUTER_SUPPORT_ENABLED
 
   /**
@@ -349,6 +362,13 @@ class EventLoopManager : public NonCopyable {
   //! The BLE request manager handles requests for all nanoapps and manages
   //! the state of the BLE subsystem that the runtime subscribes to.
   BleRequestManager mBleRequestManager;
+
+#ifdef CHRE_BLE_SOCKET_SUPPORT_ENABLED
+  //! The BLE socket manager tracks offloaded sockets and handles sending
+  //! packets between nanoapps and offloaded sockets.
+  BleSocketManager mBleSocketManager;
+#endif  // CHRE_BLE_SOCKET_SUPPORT_ENABLED
+
 #endif  // CHRE_BLE_SUPPORT_ENABLED
 
   //! The event loop managed by this event loop manager.
@@ -403,6 +423,9 @@ class EventLoopManager : public NonCopyable {
 #ifdef CHRE_MESSAGE_ROUTER_SUPPORT_ENABLED
   //! The ChreMessageHubManager that manages the CHRE Message Hub.
   ChreMessageHubManager mChreMessageHubManager;
+
+  //! The HostMessageHubManager handling communication with host message hubs.
+  HostMessageHubManager mHostMessageHubManager;
 #endif  // CHRE_MESSAGE_ROUTER_SUPPORT_ENABLED
 };
 

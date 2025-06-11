@@ -57,8 +57,12 @@ constexpr uint32_t kAudioDataTimerCookie = 0xc001cafe;
 uint32_t gAudioStatusTimerHandle = CHRE_TIMER_INVALID;
 constexpr uint32_t kAudioStatusTimerCookie = 0xb01dcafe;
 uint32_t gRangingRequestRetryTimerHandle = CHRE_TIMER_INVALID;
+constexpr uint32_t kRangingRequestSetupRetryTimerCookie = 0x600ccafe;
 constexpr uint32_t kRangingRequestRetryTimerCookie = 0x600dcafe;
+uint32_t gWwanRequestRetryTimerHandle = CHRE_TIMER_INVALID;
+constexpr uint32_t kWwanRequestRetryTimerCookie = 0x01d3cafe;
 
+constexpr uint8_t kMaxWwanRequestRetries = 3;
 constexpr uint8_t kMaxWifiRequestRetries = 3;
 
 bool getFeature(const chre_settings_test_TestCommand &command,
@@ -320,6 +324,10 @@ void Manager::handleDataFromChre(uint16_t eventType, const void *eventData) {
 }
 
 bool Manager::requestRangingForFeatureWifiRtt() {
+  if (!mCachedRangingTarget.has_value()) {
+    LOGE("No cached WiFi RTT ranging target");
+    return false;
+  }
   struct chreWifiRangingParams params = {
       .targetListLen = 1, .targetList = &mCachedRangingTarget.value()};
   return chreWifiRequestRangingAsync(&params, &kWifiRttCookie);
@@ -333,12 +341,8 @@ bool Manager::startTestForFeature(Feature feature) {
       break;
 
     case Feature::WIFI_RTT: {
-      if (!mCachedRangingTarget.has_value()) {
-        LOGE("No cached WiFi RTT ranging target");
-      } else {
-        mWifiRequestRetries = 0;
-        success = requestRangingForFeatureWifiRtt();
-      }
+      mWifiRequestRetries = 0;
+      success = requestRangingForFeatureWifiRtt();
       break;
     }
 
@@ -354,6 +358,7 @@ bool Manager::startTestForFeature(Feature feature) {
       break;
 
     case Feature::WWAN_CELL_INFO:
+      mWwanRequestRetries = 0;
       success = chreWwanGetCellInfoAsync(&kWwanCellInfoCookie);
       break;
 
@@ -419,7 +424,8 @@ void Manager::handleWifiAsyncResult(const chreAsyncResult *result) {
   switch (result->requestType) {
     case CHRE_WIFI_REQUEST_TYPE_REQUEST_SCAN: {
       if (mTestSession->feature == Feature::WIFI_RTT) {
-        if (result->errorCode == CHRE_ERROR_BUSY) {
+        if (result->errorCode == CHRE_ERROR ||
+            result->errorCode == CHRE_ERROR_BUSY) {
           if (mWifiRequestRetries >= kMaxWifiRequestRetries) {
             // The request has failed repeatedly and we are no longer retrying
             // Return success=false to the host rather than timeout.
@@ -429,15 +435,19 @@ void Manager::handleWifiAsyncResult(const chreAsyncResult *result) {
             break;
           }
 
-          // Retry on CHRE_ERROR_BUSY after a short delay
+          // Retry on CHRE_ERROR/CHRE_ERROR_BUSY after a short delay
           mWifiRequestRetries++;
           uint64_t delay = kOneSecondInNanoseconds * 2;
-          gRangingRequestRetryTimerHandle = chreTimerSet(
-              delay, &kRangingRequestRetryTimerCookie, /*oneShot=*/true);
+          const uint32_t *cookie = mTestSession->step == TestStep::SETUP
+                                       ? &kRangingRequestSetupRetryTimerCookie
+                                       : &kRangingRequestRetryTimerCookie;
+          gRangingRequestRetryTimerHandle =
+              chreTimerSet(delay, cookie, /*oneShot=*/true);
           LOGW(
-              "Request failed due to CHRE_ERROR_BUSY. Retrying after "
-              "delay=%" PRIu64 "ns, num_retries=%" PRIu8 "/%" PRIu8,
-              delay, mWifiRequestRetries, kMaxWifiRequestRetries);
+              "Request failed during %s step. Retrying "
+              "after delay=%" PRIu64 "ns, num_retries=%" PRIu8 "/%" PRIu8,
+              mTestSession->step == TestStep::SETUP ? "SETUP" : "START", delay,
+              mWifiRequestRetries, kMaxWifiRequestRetries);
           return;
         }
 
@@ -556,8 +566,27 @@ void Manager::handleWwanCellInfoResult(const chreWwanCellInfoResult *result) {
     LOGE("WWAN cell info result failed: error code %" PRIu8, result->errorCode);
   } else if (mTestSession->featureState == FeatureState::DISABLED &&
              result->cellInfoCount > 0) {
-    LOGE("WWAN cell info result should be empty when disabled: count %" PRIu8,
-         result->cellInfoCount);
+    // Allow some retries to wait for the modem to clear the cell info cache.
+    if (mWwanRequestRetries >= kMaxWwanRequestRetries) {
+      LOGE(
+          "WWAN cell info result should be empty when disabled. Hit retry "
+          "limit (%" PRIu8 "), cell_info_count= %" PRIu8,
+          kMaxWwanRequestRetries, result->cellInfoCount);
+    } else {
+      mWwanRequestRetries++;
+      uint64_t delay = kOneSecondInNanoseconds * 1;
+      gWwanRequestRetryTimerHandle =
+          chreTimerSet(delay, &kWwanRequestRetryTimerCookie, /*oneShot=*/true);
+      if (gWwanRequestRetryTimerHandle != CHRE_TIMER_INVALID) {
+        LOGW("WWAN cell info result should be empty when disabled: count %" PRIu8
+            " Retrying after delay=%" PRIu64 "ns, num_retries=%" PRIu8
+            "/%" PRIu8,
+            result->cellInfoCount, delay, mWwanRequestRetries,
+            kMaxWwanRequestRetries);
+        return;
+      }
+      LOGE("Failed to set WWAN cell info retry timer");
+    }
   } else {
     success = true;
   }
@@ -669,10 +698,24 @@ void Manager::handleTimerEvent(const void *eventData) {
   bool testSuccess = false;
   auto *cookie = static_cast<const uint32_t *>(eventData);
 
+  if (*cookie == kRangingRequestSetupRetryTimerCookie) {
+    gRangingRequestRetryTimerHandle = CHRE_TIMER_INVALID;
+    chreWifiRequestScanAsyncDefault(&kWifiScanningCookie);
+    return;
+  }
+
   if (*cookie == kRangingRequestRetryTimerCookie) {
     gRangingRequestRetryTimerHandle = CHRE_TIMER_INVALID;
     requestRangingForFeatureWifiRtt();
     return;
+  }
+
+  if (*cookie == kWwanRequestRetryTimerCookie) {
+    gWwanRequestRetryTimerHandle = CHRE_TIMER_INVALID;
+    if (chreWwanGetCellInfoAsync(&kWwanCellInfoCookie)) {
+      return;
+    }
+    LOGE("Failed to re-request WWAN cell info, rejected for processing");
   }
 
   // Ignore the audio status timer if the suspended status was received.

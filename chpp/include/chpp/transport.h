@@ -58,7 +58,7 @@ extern "C" {
  * attempted. Setting this to zero disables retransmissions.
  */
 #ifndef CHPP_TRANSPORT_MAX_RETX
-#define CHPP_TRANSPORT_MAX_RETX UINT16_C(4)
+#define CHPP_TRANSPORT_MAX_RETX UINT16_C(6)
 #endif
 
 /**
@@ -169,6 +169,8 @@ enum ChppTransportErrorCode {
   CHPP_TRANSPORT_ERROR_TIMEOUT = 6,
   //! Too many retries
   CHPP_TRANSPORT_ERROR_MAX_RETRIES = 7,
+  //! Forced reset at the transport
+  CHPP_TRANSPORT_ERROR_FORCED_RESET = 8,
   //! Message incomprehensible at App Layer
   CHPP_TRANSPORT_ERROR_APPLAYER = 0xF,
 };
@@ -339,10 +341,6 @@ struct ChppTxStatus {
   //! Last sent sequence number (irrespective of whether it has been received /
   //! ACKed or not)
   uint8_t sentSeq;
-
-  //! Does the transport layer have any packets (with or without payload) it
-  //! needs to send out?
-  bool hasPacketsToSend;
 
   //! Error code, if any, of the next packet the transport layer will send out.
   uint8_t packetCodeToSend;
@@ -537,6 +535,14 @@ void chppEnqueueTxErrorDatagram(struct ChppTransportState *context,
                                 enum ChppTransportErrorCode errorCode);
 
 /**
+ * Forces a tranport layer reset. This function can be called from the app
+ * layer.
+ *
+ * @param context Maintains state for each transport layer instance.
+ */
+void chppTransportForceReset(struct ChppTransportState *context);
+
+/**
  * Provides systems that do not use chppWorkThreadStart() and its associated
  * timeout mechanisms (that relies on chppNotifierTimedWait()) how long they
  * should wait until they run chppTransportDoWork() again, in nanoseconds.
@@ -687,14 +693,16 @@ uint8_t chppRunTransportLoopback(struct ChppTransportState *context,
  * chppWorkThreadStart() would require to call this function after initializing
  * CHPP.
  *
+ * ChppTransportState->mutex must be held while invoking this method.
+ *
  * @param context Maintains state for each transport layer instance.
  * @param resetType Distinguishes a reset from a reset-ack, as defined in the
  * ChppTransportPacketAttributes struct.
  * @param error Provides the error that led to the reset.
  */
-void chppTransportSendReset(struct ChppTransportState *context,
-                            enum ChppTransportPacketAttributes resetType,
-                            enum ChppTransportErrorCode error);
+void chppTransportSendResetLocked(struct ChppTransportState *context,
+                                  enum ChppTransportPacketAttributes resetType,
+                                  enum ChppTransportErrorCode error);
 
 /**
  * Returns the Tx MTU size at the transport layer in bytes.

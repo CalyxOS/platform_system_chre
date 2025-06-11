@@ -191,6 +191,7 @@ void chppRegisterClient(struct ChppAppState *appContext, void *clientContext,
   clientState->outReqStates = outReqStates;
   clientState->index = appContext->registeredClientCount;
   clientState->context = clientContext;
+  clientState->nextTimerTimeoutNs = CHPP_TIME_MAX;
   appContext->registeredClientStates[appContext->registeredClientCount] =
       clientState;
 
@@ -323,6 +324,11 @@ bool chppClientSendTimestampedRequestOrFail(
   CHPP_DEBUG_NOT_NULL(buf);
 
   if (!chppIsClientApiReady(clientState)) {
+    if (clientState->initialized &&
+        clientState->openState == CHPP_OPEN_STATE_CLOSED) {
+      CHPP_LOGW("Trying to send request when closed - link broken?");
+      chppTransportForceReset(clientState->appContext->transportContext);
+    }
     CHPP_FREE_AND_NULLIFY(buf);
     return false;
   }
@@ -387,7 +393,7 @@ bool chppClientSendOpenRequest(struct ChppEndpointState *clientState,
     CHPP_LOGD("Opening service - non-blocking");
     result = chppClientSendTimestampedRequestOrFail(
         clientState, openReqState, request, sizeof(*request),
-        CHPP_REQUEST_TIMEOUT_INFINITE);
+        CHPP_REQUEST_TIMEOUT_DEFAULT);
   }
 
   if (!result) {
